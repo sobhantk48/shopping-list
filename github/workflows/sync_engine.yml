@@ -1,0 +1,35 @@
+name: Prepare Flutter Engine Source
+
+on: 
+  workflow_dispatch: # اجرای دستی
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Depot Tools
+        run: |
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          echo "$GITHUB_WORKSPACE/depot_tools" >> $GITHUB_PATH
+
+      - name: Fetch Flutter Engine
+        run: |
+          mkdir engine
+          cd engine
+          fetch --nohooks flutter
+          # فقط همگام‌سازی بدون هیستوری برای کاهش حجم
+          gclient sync --no-history
+
+      - name: Compress Source Code
+        run: |
+          cd engine
+          # فشرده‌سازی با بالاترین سرعت و تبدیل به چند پارت اگه خیلی بزرگ شد
+          tar -czf flutter_engine_src.tar.gz src/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: engine-source-v1
+          files: engine/flutter_engine_src.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
