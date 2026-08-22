@@ -1,0 +1,64 @@
+name: Build Android SDK Offline Bundle
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle-sdk:
+    name: Download and bundle Android SDK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Locate Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-}"
+          if [ -z "$SDK_ROOT" ] || [ ! -d "$SDK_ROOT" ]; then
+            echo "Android SDK was not found"
+            exit 1
+          fi
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses
+
+      - name: Download required SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platforms;android-34"
+
+      - name: Prepare offline bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build_artifact/cmdline-tools build_artifact/platforms build_artifact/licenses
+          cp -a "$ANDROID_SDK_ROOT/cmdline-tools/latest" build_artifact/cmdline-tools/
+          cp -a "$ANDROID_SDK_ROOT/platforms/android-34" build_artifact/platforms/
+          if [ -d "$ANDROID_SDK_ROOT/licenses" ]; then
+            cp -a "$ANDROID_SDK_ROOT/licenses/." build_artifact/licenses/
+          fi
+          cd build_artifact
+          zip -r -q ../android-sdk-offline-bundle.zip cmdline-tools platforms licenses
+          cd ..
+          sha256sum android-sdk-offline-bundle.zip > SHA256SUMS
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-sdk-offline-v1
+          name: "Android SDK Offline Bundle"
+          body: "Offline Android SDK bundle: cmdline-tools, android-34 platform, licenses."
+          files: |
+            android-sdk-offline-bundle.zip
+            SHA256SUMS
+          overwrite_files: true
