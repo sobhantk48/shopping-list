@@ -1,0 +1,165 @@
+name: Build Android SDK Offline Bundle
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle-sdk:
+    name: Download and bundle Android SDK
+    runs-on: ubuntu-latest
+
+    env:
+      ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+
+    steps:
+      - name: Locate Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+
+          if [ -z "$SDK_ROOT" ] || [ ! -d "$SDK_ROOT" ]; then
+            echo "Android SDK was not found"
+            exit 1
+          fi
+
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
+          echo "Using SDK: $SDK_ROOT"
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          yes | sdkmanager \
+            --sdk_root="$ANDROID_SDK_ROOT" \
+            --licenses
+
+      - name: Download required SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sdkmanager \
+            --sdk_root="$ANDROID_SDK_ROOT" \
+            "platforms;android-34"
+
+      - name: Verify downloaded packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -x \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+          test -d \
+            "$ANDROID_SDK_ROOT/platforms/android-34"
+
+          test -f \
+            "$ANDROID_SDK_ROOT/platforms/android-34/android.jar"
+
+          echo "Required files verified successfully."
+
+      - name: Prepare offline bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf build_artifact android-sdk-offline-bundle.zip SHA256SUMS
+
+          mkdir -p \
+            build_artifact/cmdline-tools \
+            build_artifact/platforms \
+            build_artifact/licenses
+
+          cp -a \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest" \
+            build_artifact/cmdline-tools/
+
+          cp -a \
+            "$ANDROID_SDK_ROOT/platforms/android-34" \
+            build_artifact/platforms/
+
+          if [ -d "$ANDROID_SDK_ROOT/licenses" ]; then
+            cp -a \
+              "$ANDROID_SDK_ROOT/licenses/." \
+              build_artifact/licenses/
+          fi
+
+          cat > build_artifact/README.txt <<'EOF'
+          Android SDK Offline Bundle
+
+          Included:
+          - cmdline-tools/latest
+          - platforms/android-34
+          - licenses
+
+          Intentionally excluded:
+          - platform-tools
+          - build-tools
+
+          Reason:
+          This bundle is intended for ARM64/aarch64 Linux environments.
+          GitHub-hosted runners are usually x86_64, so native tools such as
+          adb, aapt2 and zipalign from the runner may not run on ARM64.
+
+          Target installation path:
+          /usr/lib/android-sdk
+          EOF
+
+          cd build_artifact
+
+          zip -r -q \
+            ../android-sdk-offline-bundle.zip \
+            cmdline-tools platforms licenses README.txt
+
+          cd ..
+
+          sha256sum \
+            android-sdk-offline-bundle.zip \
+            > SHA256SUMS
+
+          ls -lh \
+            android-sdk-offline-bundle.zip \
+            SHA256SUMS
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-sdk-offline-bundle
+          path: |
+            android-sdk-offline-bundle.zip
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-sdk-offline-v1
+          name: Android SDK Offline Bundle
+          body: |
+            Offline Android SDK bundle for ARM64/aarch64 Linux.
+
+            Included:
+            - Android SDK Command-line Tools
+            - Android API 34 platform
+            - Android SDK licenses
+
+            Deliberately excluded:
+            - platform-tools
+            - build-tools
+
+            The excluded packages contain native binaries that are normally
+            built for x86_64 on GitHub-hosted runners and may not run on ARM64.
+          files: |
+            android-sdk-offline-bundle.zip
+            SHA256SUMS
+          overwrite_files: true
