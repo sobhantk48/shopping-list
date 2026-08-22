@@ -1,0 +1,26 @@
+name: Fetch Android Cmdline-Tools
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bundle-cmdline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Archive Android SDK cmdline-tools
+        run: |
+          mkdir -p build_artifact/cmdline-tools
+          cp -r "$ANDROID_SDK_ROOT/cmdline-tools/latest" build_artifact/cmdline-tools/latest
+          cd build_artifact
+          zip -r ../commandlinetools-linux-ready.zip cmdline-tools
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-tools-v1
+          name: "Android Command-Line Tools for Linux"
+          body: "Official Android SDK cmdline-tools (latest) extracted directly from GitHub Runner."
+          files: commandlinetools-linux-ready.zip
