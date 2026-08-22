@@ -1,64 +1,53 @@
-name: Build Android SDK Offline Bundle
+name: Build Android SDK Bundle
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  bundle-sdk:
-    name: Download and bundle Android SDK
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Locate Android SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          yes | SDK_ROOT="${ANDROID_HOME:-}"
-          if [ -z "$SDK_ROOT" ] || [ ! -d "$SDK_ROOT" ]; then
-            echo "Android SDK was not found"
-            exit 1
-          fi
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Accept Android SDK licenses
-        shell: bash
-        run: |
-          set -euo pipefail
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses
-
-      - name: Download required SDK packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platforms;android-34"
-
-      - name: Prepare offline bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build_artifact/cmdline-tools build_artifact/platforms build_artifact/licenses
-          cp -a "$ANDROID_SDK_ROOT/cmdline-tools/latest" build_artifact/cmdline-tools/
-          cp -a "$ANDROID_SDK_ROOT/platforms/android-34" build_artifact/platforms/
-          if [ -d "$ANDROID_SDK_ROOT/licenses" ]; then
-            cp -a "$ANDROID_SDK_ROOT/licenses/." build_artifact/licenses/
-          fi
-          cd build_artifact
-          zip -r -q ../android-sdk-offline-bundle.zip cmdline-tools platforms licenses
-          cd ..
-          sha256sum android-sdk-offline-bundle.zip > SHA256SUMS
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
-          tag_name: android-sdk-offline-v1
-          name: "Android SDK Offline Bundle"
-          body: "Offline Android SDK bundle: cmdline-tools, android-34 platform, licenses."
-          files: |
-            android-sdk-offline-bundle.zip
-            SHA256SUMS
-          overwrite_files: true
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android Commandline Tools & Download Platform
+        run: |
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          cd $HOME/android-sdk/cmdline-tools
+          
+          # دانلود آخرین نسخه ابزارهای خط فرمان رسمی
+          curl -s -o commandlinetools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q commandlinetools.zip
+          mv cmdline-tools latest
+          rm commandlinetools.zip
+          
+          export ANDROID_HOME=$HOME/android-sdk
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          
+          # ایجاد مستقیم فایل‌های لایسنس تایید شده بدون نیاز به پایپ yes
+          mkdir -p $ANDROID_HOME/licenses
+          printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_HOME/licenses/android-sdk-license
+          printf "84831b9409646a918e30573bab4c9c91346d8abd" > $ANDROID_HOME/licenses/android-sdk-preview-license
+
+          # نصب پلتفرم مورد نیاز
+          sdkmanager --install "platforms;android-34"
+
+      - name: Create Bundle ZIP
+        run: |
+          cd $HOME/android-sdk
+          # فقط پلتفرم‌ها، لایسنس‌ها و ابزارهای کامندلاین رو زیپ می‌کنیم
+          zip -r -q $GITHUB_WORKSPACE/android-sdk-arm-bundle.zip cmdline-tools platforms licenses
+
+      - name: Upload Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-sdk-arm-bundle
+          path: android-sdk-arm-bundle.zip
+          retention-days: 5
