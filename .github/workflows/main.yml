@@ -1,64 +1,120 @@
-name: Build Android SDK Offline Bundle
+name: Build Android SDK Bundle
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  bundle-sdk:
-    name: Download and bundle Android SDK
+  build-sdk-bundle:
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+      CMDLINE_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip
+      CMDLINE_TOOLS_SHA256: 4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583
+
     steps:
-      - name: Locate Android SDK
+      - name: Install required host tools
         shell: bash
         run: |
-          set -euo pipefail
-          SDK_ROOT="${ANDROID_HOME:-}"
-          if [ -z "$SDK_ROOT" ] || [ ! -d "$SDK_ROOT" ]; then
-            echo "Android SDK was not found"
-            exit 1
-          fi
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install -y curl unzip zip openjdk-17-jdk
 
-      - name: Accept Android SDK licenses
+      - name: Download Android command-line tools
         shell: bash
         run: |
-          set -euo pipefail
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses
+          set -e
 
-      - name: Download required SDK packages
+          mkdir -p "$RUNNER_TEMP/android-tools"
+          cd "$RUNNER_TEMP/android-tools"
+
+          curl \
+            --fail \
+            --location \
+            --retry 5 \
+            --retry-delay 5 \
+            --connect-timeout 30 \
+            --max-time 1200 \
+            --output commandlinetools.zip \
+            "$CMDLINE_TOOLS_URL"
+
+          printf '%s  %s\n' \
+            "$CMDLINE_TOOLS_SHA256" \
+            commandlinetools.zip \
+            | sha256sum --check
+
+          unzip -q commandlinetools.zip
+
+          test -f cmdline-tools/bin/sdkmanager
+          test -f cmdline-tools/source.properties
+
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          mv cmdline-tools "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+
+          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+      - name: Configure Android SDK
         shell: bash
         run: |
-          set -euo pipefail
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platforms;android-34"
+          set -e
 
-      - name: Prepare offline bundle
+          mkdir -p "$ANDROID_SDK_ROOT/licenses"
+
+          printf '%s\n' \
+            8933bad161af4178b1185d1a37fbf41ea5269c55 \
+            d56f5187479451eabf01fb78af6dfcb131a6481e \
+            24333f8a63b6825ea9c5514f83c2829b004d1fee \
+            > "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
+
+          printf '%s\n' \
+            84831b9409646a918e30573bab4c9c91346d8abd \
+            > "$ANDROID_SDK_ROOT/licenses/android-sdk-preview-license"
+
+          printf '%s\n' \
+            "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" \
+            >> "$GITHUB_ENV"
+
+          printf '%s\n' \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" \
+            >> "$GITHUB_PATH"
+
+          java -version
+          sdkmanager --version
+
+      - name: Install Android platform
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p build_artifact/cmdline-tools build_artifact/platforms build_artifact/licenses
-          cp -a "$ANDROID_SDK_ROOT/cmdline-tools/latest" build_artifact/cmdline-tools/
-          cp -a "$ANDROID_SDK_ROOT/platforms/android-34" build_artifact/platforms/
-          if [ -d "$ANDROID_SDK_ROOT/licenses" ]; then
-            cp -a "$ANDROID_SDK_ROOT/licenses/." build_artifact/licenses/
-          fi
-          cd build_artifact
-          zip -r -q ../android-sdk-offline-bundle.zip cmdline-tools platforms licenses
-          cd ..
-          sha256sum android-sdk-offline-bundle.zip > SHA256SUMS
+          set -e
 
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+          sdkmanager \
+            --sdk_root="$ANDROID_SDK_ROOT" \
+            --verbose \
+            "platforms;android-34"
+
+          test -d "$ANDROID_SDK_ROOT/platforms/android-34"
+          test -f "$ANDROID_SDK_ROOT/platforms/android-34/android.jar"
+
+      - name: Create offline SDK bundle
+        shell: bash
+        run: |
+          set -e
+
+          cd "$ANDROID_SDK_ROOT"
+
+          zip \
+            -r \
+            -q \
+            "$GITHUB_WORKSPACE/android-sdk-bundle.zip" \
+            cmdline-tools \
+            platforms \
+            licenses
+
+          test -s "$GITHUB_WORKSPACE/android-sdk-bundle.zip"
+          sha256sum "$GITHUB_WORKSPACE/android-sdk-bundle.zip"
+
+      - name: Upload offline SDK bundle
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: android-sdk-offline-v1
-          name: "Android SDK Offline Bundle"
-          body: "Offline Android SDK bundle: cmdline-tools, android-34 platform, licenses."
-          files: |
-            android-sdk-offline-bundle.zip
-            SHA256SUMS
-          overwrite_files: true
+          name: android-sdk-bundle
+          path: android-sdk-bundle.zip
+          if-no-files-found: error
+          retention-days: 7
