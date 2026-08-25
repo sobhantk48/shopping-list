@@ -1,92 +1,40 @@
-name: Build Android SDK Bundle
+name: Build and Package NDK
 
 on:
   workflow_dispatch:
-    inputs:
-      android_api:
-        description: Android API level
-        required: true
-        default: "36"
-      build_tools:
-        description: Build Tools version
-        required: true
-        default: "36.0.0"
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04-arm
-
+  package-ndk:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
 
-      - name: Install tools
-        shell: bash
+      - name: Install NDK via SDKManager
         run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y unzip zip curl ca-certificates
+          yes | sdkmanager --licenses
+          sdkmanager --install "ndk;27.2.12479018"
 
-      - name: Download command line tools
-        shell: bash
+      - name: Zip NDK
         run: |
-          set -euo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/android-sdk/cmdline-tools"
-          cd "$GITHUB_WORKSPACE/android-sdk"
+          cd $ANDROID_SDK_ROOT
+          # ساخت زیپ با حفظ ساختار استاندارد ndk/27.2.12479018
+          zip -r -q /tmp/ndk-27.2.12479018-linux.zip ndk/27.2.12479018
 
-          curl -L --fail -o commandlinetools.zip \
-            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+      - name: Upload NDK to Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: /tmp/ndk-27.2.12479018-linux.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          unzip -q commandlinetools.zip -d "$GITHUB_WORKSPACE/android-sdk/cmdline-tools"
-          mv "$GITHUB_WORKSPACE/android-sdk/cmdline-tools/cmdline-tools" "$GITHUB_WORKSPACE/android-sdk/cmdline-tools/latest"
-
-      - name: Add SDK to PATH
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "ANDROID_SDK_ROOT=$GITHUB_WORKSPACE/android-sdk" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk" >> "$GITHUB_ENV"
-          echo "$GITHUB_WORKSPACE/android-sdk/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "$GITHUB_WORKSPACE/android-sdk/platform-tools" >> "$GITHUB_PATH"
-
-      - name: Accept licenses
-        shell: bash
-        run: |
-          set -euo pipefail
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
-
-      - name: Install packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
-            "platform-tools" \
-            "platforms;android-${{ inputs.android_api }}" \
-            "build-tools;${{ inputs.build_tools }}"
-
-      - name: Write manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --list_installed > "$ANDROID_SDK_ROOT/installed-packages.txt"
-
-      - name: Compute checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$ANDROID_SDK_ROOT"
-          find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
-
-      - name: Pack archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/out"
-          cd "$GITHUB_WORKSPACE"
-          zip -qr -9 "$GITHUB_WORKSPACE/out/android-sdk-offline-linux-arm64.zip" android-sdk
-
-      - name: Upload artifact
+      - name: Upload Artifact (Fallback)
         uses: actions/upload-artifact@v4
         with:
-          name: android-sdk-offline-linux-arm64
-          path: out/android-sdk-offline-linux-arm64.zip
+          name: ndk-27.2.12479018-linux
+          path: /tmp/ndk-27.2.12479018-linux.zip
+          retention-days: 1
