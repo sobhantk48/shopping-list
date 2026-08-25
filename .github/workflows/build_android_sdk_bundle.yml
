@@ -23,14 +23,31 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Install Gradle ${{ env.GRADLE_VERSION }}
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36 components
         run: |
           set -eux
-          wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
-          unzip -q "gradle-${GRADLE_VERSION}-bin.zip" -d "$HOME"
+          yes | sdkmanager --licenses || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+
+      - name: Install Gradle
+        run: |
+          set -eux
+          wget -q \
+            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+
+          unzip -q \
+            "gradle-${GRADLE_VERSION}-bin.zip" \
+            -d "$HOME"
+
           echo "$HOME/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
 
-      - name: Create minimal valid Android Gradle project
+      - name: Create a valid AGP 9 cache project
         run: |
           set -eux
 
@@ -47,7 +64,10 @@ jobs:
           }
 
           dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositoriesMode.set(
+                  RepositoriesMode.FAIL_ON_PROJECT_REPOS
+              )
+
               repositories {
                   google()
                   mavenCentral()
@@ -58,6 +78,7 @@ jobs:
           include(":app")
           EOF
 
+          # KGP با apply false دانلود می‌شود، اما به app اعمال نخواهد شد.
           cat > build.gradle.kts <<EOF
           plugins {
               id("com.android.application") version "${AGP_VERSION}" apply false
@@ -65,18 +86,19 @@ jobs:
           }
           EOF
 
+          # نکته مهم:
+          # در AGP 9 نباید org.jetbrains.kotlin.android را اینجا apply کرد.
           cat > app/build.gradle.kts <<'EOF'
           plugins {
               id("com.android.application")
-              id("org.jetbrains.kotlin.android")
           }
 
           android {
-              namespace = "com.example.cache"
+              namespace = "com.example.gradlecache"
               compileSdk = 36
 
               defaultConfig {
-                  applicationId = "com.example.cache"
+                  applicationId = "com.example.gradlecache"
                   minSdk = 24
                   targetSdk = 36
                   versionCode = 1
@@ -85,65 +107,61 @@ jobs:
           }
 
           dependencies {
-              implementation("androidx.core:core-ktx:1.17.0")
-              implementation("androidx.appcompat:appcompat:1.7.1")
-              implementation("com.google.android.material:material:1.13.0")
+              implementation("androidx.core:core-ktx:1.15.0")
+              implementation("androidx.appcompat:appcompat:1.7.0")
+              implementation("com.google.android.material:material:1.12.0")
           }
           EOF
 
-          cat > build.gradle.kts.tmp <<'EOF'
-          EOF
-
-      - name: Resolve AGP, Kotlin plugin, and Android dependencies
+      - name: Resolve plugins and Android dependencies
         run: |
           set -eux
           cd cache-project
 
-          # فقط configuration را انجام می‌دهد:
-          # plugin markerها + AGP + وابستگی‌های انتقالی دانلود می‌شوند.
           gradle help \
             --no-daemon \
             --refresh-dependencies \
             --stacktrace
 
-          # dependencyهای اپ را نیز واقعاً resolve می‌کند.
           gradle :app:dependencies \
             --configuration debugRuntimeClasspath \
             --no-daemon \
             --refresh-dependencies \
             --stacktrace
 
-      - name: Verify AGP 9.1.1 is actually cached
+      - name: Verify AGP 9.1.1 is in Gradle cache
         run: |
           set -eux
 
-          find "$HOME/.gradle/caches/modules-2/files-2.1" \
-            -path "*com.android.tools.build/gradle/9.1.1*" \
-            -print
+          AGP_DIR="$HOME/.gradle/caches/modules-2/files-2.1/com.android.tools.build/gradle/${AGP_VERSION}"
 
-          test -d "$HOME/.gradle/caches/modules-2/files-2.1/com.android.tools.build/gradle/9.1.1"
+          test -d "$AGP_DIR"
 
-      - name: Remove temporary locks
+          echo "AGP cache directory:"
+          find "$AGP_DIR" -maxdepth 3 -type f -print
+
+      - name: Remove Gradle locks
         run: |
           set -eux
-          find "$HOME/.gradle/caches" -type f \( -name "*.lock" -o -name "gc.properties" \) -delete
 
-      - name: Package Gradle caches
+          find "$HOME/.gradle/caches" \
+            -type f \
+            \( -name "*.lock" -o -name "gc.properties" \) \
+            -delete
+
+      - name: Package portable Gradle cache
         run: |
           set -eux
           cd "$HOME"
 
-          # modules-2 هم فایل‌ها و هم metadata لازم برای حالت --offline را دارد.
-          # wrapper/dists هم اضافه می‌شود تا فایل‌های Gradle دانلودشده باقی بمانند.
-          tar -I 'zstd -19 -T0' -cf gradle-cache-offline-agp-${AGP_VERSION}.tar.zst \
-            .gradle/caches/modules-2 \
-            .gradle/wrapper/dists 2>/dev/null || \
-          tar -I 'zstd -19 -T0' -cf gradle-cache-offline-agp-${AGP_VERSION}.tar.zst \
+          # modules-2 شامل jar/pom/module و metadata لازم برای --offline است.
+          tar -I 'zstd -19 -T0' \
+            -cf "gradle-cache-offline-agp-${AGP_VERSION}.tar.zst" \
             .gradle/caches/modules-2
 
-          ls -lh gradle-cache-offline-agp-${AGP_VERSION}.tar.zst
+          ls -lh "gradle-cache-offline-agp-${AGP_VERSION}.tar.zst"
 
-      - name: Upload offline Gradle cache
+      - name: Upload Gradle cache artifact
         uses: actions/upload-artifact@v4
         with:
           name: gradle-cache-offline-agp-${{ env.AGP_VERSION }}
