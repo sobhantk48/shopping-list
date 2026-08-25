@@ -15,24 +15,20 @@ jobs:
 
       - name: Install NDK via SDKManager
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager --install "ndk;27.2.12479018"
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "$ANDROID_SDK_ROOT/cmdline-tools" -name sdkmanager -type f -executable | head -n 1)
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses
+          "$SDKMANAGER" --install "ndk;27.2.12479018"
 
       - name: Zip NDK
         run: |
-          cd $ANDROID_SDK_ROOT
-          # ساخت زیپ با حفظ ساختار استاندارد ndk/27.2.12479018
+          cd "$ANDROID_SDK_ROOT"
           zip -r -q /tmp/ndk-27.2.12479018-linux.zip ndk/27.2.12479018
 
-      - name: Upload NDK to Release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: /tmp/ndk-27.2.12479018-linux.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Artifact (Fallback)
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ndk-27.2.12479018-linux
